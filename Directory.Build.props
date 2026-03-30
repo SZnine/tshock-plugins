@@ -1,0 +1,5 @@
+﻿<Project>
+  <PropertyGroup>
+    <TShockServerPath Condition="'$(TShockServerPath)' == ''">$(MSBuildThisFileDirectory)vendor\tshock-sdk</TShockServerPath>
+  </PropertyGroup>
+</Project>
