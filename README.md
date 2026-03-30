@@ -1,10 +1,24 @@
 ﻿# TShock Plugins
 
-面向 `TShock 6.1.0 / Terraria 1.4.5.6` 的插件源码仓库。
+面向 `TShock 6.1.0 / Terraria 1.4.5.6` 的插件仓库。
 
 作者：`鱼仔仔面`
 
-## 当前项目
+## 下载
+
+当前发布版本：
+
+- [v0.1.0 Release](https://github.com/SZnine/tshock-plugins/releases/tag/v0.1.0)
+
+可直接下载：
+
+- `PermanentPotionBuffs.dll`
+- `AutoHerbFarm.dll`
+- `NpcManagementTweaks.dll`
+- `COMMANDS.md`
+- `tshock-plugins-v0.1.0.zip`
+
+## 当前插件
 
 ### PermanentPotionBuffs
 
@@ -12,7 +26,7 @@
 - 普通药水时长双倍
 - 普通药水死亡剩余时间继承
 
-位置：`plugins/PermanentPotionBuffs`
+说明：`plugins/PermanentPotionBuffs/README.md`
 
 ### AutoHerbFarm
 
@@ -20,7 +34,7 @@
 - 支持游戏内配置农场区域
 - 支持按农场单独调整成长参数
 
-位置：`plugins/AutoHerbFarm`
+说明：`plugins/AutoHerbFarm/README.md`
 
 ### NpcManagementTweaks
 
@@ -28,56 +42,28 @@
 - 旅商到访规则调整
 - 渔夫任务每日提交次数扩展
 
-位置：`plugins/NpcManagementTweaks`
+说明：`plugins/NpcManagementTweaks/README.md`
 
-## 预留位置
+## 安装
 
-为后续功能插件预留了统一入口：
+1. 下载需要的 DLL。
+2. 放入你的 TShock 服务器 `ServerPlugins/` 目录。
+3. 启动服务器，让插件自动生成配置文件。
+4. 按插件各自 README 或 `COMMANDS.md` 调整配置与命令。
 
-- `plugins/_future/`
+## 仓库内容
 
-用途：
-- 记录准备开发的插件方向
-- 统一插件命名约定
-- 避免未来继续把临时方案和正式项目混在一起
+这个仓库只保留：
 
-## 目录结构
+- 插件源码
+- 编译依赖
+- 简明命令表
 
-- `plugins/`
-  - 当前插件源码项目
-  - 未来插件预留目录
-- `vendor/tshock-sdk/`
-  - 编译所需引用 DLL
-- `Tshock.sln`
-  - 解决方案入口
-- `Directory.Build.props`
-  - 统一引用路径配置
+不包含：
 
-## 构建
+- 运行中的 TShock 服务器本体
+- 地图、数据库、日志、运行配置
 
-要求：
-- `.NET 9 SDK`
+## 后续
 
-命令：
-
-```powershell
-dotnet build .\plugins\PermanentPotionBuffs\PermanentPotionBuffs.csproj -c Release
-dotnet build .\plugins\AutoHerbFarm\AutoHerbFarm.csproj -c Release
-dotnet build .\plugins\NpcManagementTweaks\NpcManagementTweaks.csproj -c Release
-```
-
-输出目录：
-
-```text
-plugins/<ProjectName>/bin/Release/net9.0/
-```
-
-## 部署
-
-将目标 DLL 复制到你的 TShock 服务器：
-
-```text
-ServerPlugins/
-```
-
-运行时服务器本体、地图、日志、数据库与配置不包含在仓库中。
+未来新增插件会继续放在 `plugins/` 下，并在 release 中单独提供对应 DLL。
