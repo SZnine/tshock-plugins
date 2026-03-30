@@ -1,4 +1,5 @@
-﻿using Terraria;
+﻿using Microsoft.Xna.Framework;
+using Terraria;
 using Terraria.ID;
 using TerrariaApi.Server;
 using TShockAPI;
@@ -10,7 +11,7 @@ namespace NpcManagementTweaks;
 public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
 {
     private const string AdminPermission = "npcmanagementtweaks.admin";
-    private static readonly Version PluginVersion = new(0, 2, 1);
+    private static readonly Version PluginVersion = new(0, 2, 2);
 
     private readonly Dictionary<int, int> _anglerTurnInsToday = [];
     private readonly HashSet<int> _playersWithFinishedFlag = [];
@@ -18,7 +19,9 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
     private NpcManagementTweaksConfig _config = new();
     private string _configPath = string.Empty;
     private int _anglerTicks;
+    private int _townNpcTicks;
     private bool _dailyResetHandled;
+    private bool _travelingMerchantHandledForDay;
 
     public NpcManagementTweaksPlugin(Main game)
         : base(game)
@@ -27,7 +30,7 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
 
     public override string Author => "鱼仔仔面";
 
-    public override string Description => "NPC-focused tweaks for town NPC housing, traveling merchant arrival/shop size, and angler turn-in limits.";
+    public override string Description => "NPC-focused tweaks for town NPC housing, traveling merchant arrival, and angler turn-in limits.";
 
     public override string Name => "NpcManagementTweaks";
 
@@ -80,6 +83,8 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
     private void OnGameUpdate(EventArgs args)
     {
         HandleDailyReset();
+        HandleTownNpcTweaks();
+        HandleTravelingMerchant();
         HandleAnglerTurnInLimit();
     }
 
@@ -93,16 +98,98 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
             }
 
             _dailyResetHandled = true;
+            _travelingMerchantHandledForDay = false;
             _anglerTurnInsToday.Clear();
             _playersWithFinishedFlag.Clear();
-            Log("daily angler counters reset");
+            Log($"daily reset townEnabled={_config.TownNpcs.Enabled} merchantEnabled={_config.TravelingMerchant.Enabled} anglerEnabled={_config.Angler.Enabled}");
             return;
         }
 
         if (!Main.dayTime)
         {
             _dailyResetHandled = false;
+            _travelingMerchantHandledForDay = false;
         }
+    }
+
+    private void HandleTownNpcTweaks()
+    {
+        if (!_config.TownNpcs.Enabled || !_config.TownNpcs.AllowDaytimeGoHome || !Main.dayTime)
+        {
+            return;
+        }
+
+        if (_townNpcTicks++ < _config.TownNpcs.ScanIntervalTicks)
+        {
+            return;
+        }
+
+        _townNpcTicks = 0;
+
+        for (var i = 0; i < Main.npc.Length; i++)
+        {
+            var npc = Main.npc[i];
+            if (npc is null || !npc.active || !npc.townNPC || npc.type == NPCID.TravellingMerchant || npc.homeless)
+            {
+                continue;
+            }
+
+            if (npc.homeTileX <= 0 || npc.homeTileY <= 0)
+            {
+                continue;
+            }
+
+            if (!_config.TownNpcs.TeleportDirectlyHome)
+            {
+                continue;
+            }
+
+            var homePosition = GetTownNpcHomePosition(npc);
+            var distanceTiles = Vector2.Distance(npc.position, homePosition) / 16f;
+            if (distanceTiles <= _config.TownNpcs.TeleportDistanceTiles)
+            {
+                continue;
+            }
+
+            npc.velocity = Vector2.Zero;
+            npc.position = homePosition;
+            npc.netUpdate = true;
+            NetMessage.SendData((int)MessageID.SyncNPC, -1, -1, null, npc.whoAmI);
+        }
+    }
+
+    private void HandleTravelingMerchant()
+    {
+        if (!_config.TravelingMerchant.Enabled || !Main.dayTime || Main.time >= 60.0 || _travelingMerchantHandledForDay)
+        {
+            return;
+        }
+
+        _travelingMerchantHandledForDay = true;
+
+        if (IsTravelingMerchantActive())
+        {
+            Log("traveling merchant already active for today");
+            return;
+        }
+
+        var numerator = _config.TravelingMerchant.ArrivalChanceNumerator;
+        var denominator = _config.TravelingMerchant.ArrivalChanceDenominator;
+        if (numerator <= 0 || denominator <= 0)
+        {
+            Log("traveling merchant chance disabled by config");
+            return;
+        }
+
+        var roll = Main.rand.Next(denominator);
+        if (roll >= numerator)
+        {
+            Log($"traveling merchant skipped today roll={roll} chance={numerator}/{denominator}");
+            return;
+        }
+
+        WorldGen.SpawnTravelNPC();
+        Log($"traveling merchant spawned roll={roll} chance={numerator}/{denominator}");
     }
 
     private void HandleAnglerTurnInLimit()
@@ -173,7 +260,7 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
                 break;
 
             case "status":
-                args.Player.SendInfoMessage($"[NpcManagementTweaks] AnglerEnabled={_config.Angler.Enabled}, ScanIntervalTicks={_config.Angler.ScanIntervalTicks}, DailyTurnInLimit={_config.Angler.DailyTurnInLimit}, ActiveCounters={_anglerTurnInsToday.Count}");
+                args.Player.SendInfoMessage($"[NpcManagementTweaks] TownNpcs={_config.TownNpcs.Enabled}, Merchant={_config.TravelingMerchant.Enabled} ({_config.TravelingMerchant.ArrivalChanceNumerator}/{_config.TravelingMerchant.ArrivalChanceDenominator}), Angler={_config.Angler.Enabled}, DailyTurnInLimit={_config.Angler.DailyTurnInLimit}");
                 break;
 
             default:
@@ -186,16 +273,36 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
     {
         _config = NpcManagementTweaksConfig.Load(_configPath);
         _anglerTicks = 0;
+        _townNpcTicks = 0;
         _anglerTurnInsToday.Clear();
         _playersWithFinishedFlag.Clear();
-        Log($"config reloaded anglerEnabled={_config.Angler.Enabled} scanTicks={_config.Angler.ScanIntervalTicks} dailyTurnInLimit={_config.Angler.DailyTurnInLimit}");
+        Log($"config reloaded townEnabled={_config.TownNpcs.Enabled} merchantEnabled={_config.TravelingMerchant.Enabled} merchantChance={_config.TravelingMerchant.ArrivalChanceNumerator}/{_config.TravelingMerchant.ArrivalChanceDenominator} anglerEnabled={_config.Angler.Enabled} dailyTurnInLimit={_config.Angler.DailyTurnInLimit}");
+    }
+
+    private static bool IsTravelingMerchantActive()
+    {
+        for (var i = 0; i < Main.npc.Length; i++)
+        {
+            var npc = Main.npc[i];
+            if (npc is not null && npc.active && npc.type == NPCID.TravellingMerchant)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static Vector2 GetTownNpcHomePosition(NPC npc)
+    {
+        var x = (npc.homeTileX * 16f) + 8f - (npc.width / 2f);
+        var y = (npc.homeTileY * 16f) - npc.height;
+        return new Vector2(x, y);
     }
 
     private static void Log(string message)
     {
-        TShock.Log.ConsoleInfo($"[NpcManagementTweaks:AnglerLimit] {message}");
+        TShock.Log.ConsoleInfo($"[NpcManagementTweaks] {message}");
     }
 }
-
-
 
