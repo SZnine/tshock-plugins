@@ -1,4 +1,5 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Reflection;
+using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
 using TerrariaApi.Server;
@@ -11,17 +12,26 @@ namespace NpcManagementTweaks;
 public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
 {
     private const string AdminPermission = "npcmanagementtweaks.admin";
-    private static readonly Version PluginVersion = new(0, 2, 2);
+    private static readonly Version PluginVersion = new(0, 2, 4);
+    private static readonly MethodInfo? TownNpcTeleportHomeMethod = typeof(NPC).GetMethod(
+        "AI_007_TownEntities_TeleportToHome",
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+        binder: null,
+        types: [typeof(int), typeof(int)],
+        modifiers: null);
 
     private readonly Dictionary<int, int> _anglerTurnInsToday = [];
     private readonly HashSet<int> _playersWithFinishedFlag = [];
+    private readonly Dictionary<int, TownNpcTeleportState> _townNpcTeleportStates = [];
 
     private NpcManagementTweaksConfig _config = new();
     private string _configPath = string.Empty;
     private int _anglerTicks;
     private int _townNpcTicks;
+    private int _daySequence;
     private bool _dailyResetHandled;
     private bool _travelingMerchantHandledForDay;
+    private bool _loggedMissingTownNpcTeleportMethod;
 
     public NpcManagementTweaksPlugin(Main game)
         : base(game)
@@ -98,6 +108,7 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
             }
 
             _dailyResetHandled = true;
+            _daySequence++;
             _travelingMerchantHandledForDay = false;
             _anglerTurnInsToday.Clear();
             _playersWithFinishedFlag.Clear();
@@ -139,22 +150,58 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
                 continue;
             }
 
-            if (!_config.TownNpcs.TeleportDirectlyHome)
+            if (!ShouldTeleportTownNpcHome(npc))
             {
                 continue;
             }
 
-            var homePosition = GetTownNpcHomePosition(npc);
-            var distanceTiles = Vector2.Distance(npc.position, homePosition) / 16f;
-            if (distanceTiles <= _config.TownNpcs.TeleportDistanceTiles)
+            TryTeleportTownNpcHome(npc);
+        }
+    }
+
+    private bool ShouldTeleportTownNpcHome(NPC npc)
+    {
+        if (!_config.TownNpcs.TeleportDirectlyHome)
+        {
+            return false;
+        }
+
+        var homePosition = GetTownNpcHomePosition(npc);
+        var distanceTiles = Vector2.Distance(npc.position, homePosition) / 16f;
+        if (distanceTiles <= _config.TownNpcs.TeleportDistanceTiles)
+        {
+            return false;
+        }
+
+        return !_townNpcTeleportStates.TryGetValue(npc.whoAmI, out var state)
+            || state.DaySequence != _daySequence
+            || state.HomeTileX != npc.homeTileX
+            || state.HomeTileY != npc.homeTileY;
+    }
+
+    private void TryTeleportTownNpcHome(NPC npc)
+    {
+        if (TownNpcTeleportHomeMethod is null)
+        {
+            if (!_loggedMissingTownNpcTeleportMethod)
             {
-                continue;
+                _loggedMissingTownNpcTeleportMethod = true;
+                Log("town NPC teleport-home method was not found; daytime go-home teleport is unavailable on this server build");
             }
 
-            npc.velocity = Vector2.Zero;
-            npc.position = homePosition;
+            return;
+        }
+
+        try
+        {
+            TownNpcTeleportHomeMethod.Invoke(npc, [npc.homeTileX, npc.homeTileY]);
+            _townNpcTeleportStates[npc.whoAmI] = new TownNpcTeleportState(_daySequence, npc.homeTileX, npc.homeTileY);
             npc.netUpdate = true;
             NetMessage.SendData((int)MessageID.SyncNPC, -1, -1, null, npc.whoAmI);
+        }
+        catch (TargetInvocationException ex)
+        {
+            Log($"failed to teleport town NPC {npc.FullName} ({npc.whoAmI}) home: {ex.InnerException?.Message ?? ex.Message}");
         }
     }
 
@@ -276,6 +323,8 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
         _townNpcTicks = 0;
         _anglerTurnInsToday.Clear();
         _playersWithFinishedFlag.Clear();
+        _townNpcTeleportStates.Clear();
+        _loggedMissingTownNpcTeleportMethod = false;
         Log($"config reloaded townEnabled={_config.TownNpcs.Enabled} merchantEnabled={_config.TravelingMerchant.Enabled} merchantChance={_config.TravelingMerchant.ArrivalChanceNumerator}/{_config.TravelingMerchant.ArrivalChanceDenominator} anglerEnabled={_config.Angler.Enabled} dailyTurnInLimit={_config.Angler.DailyTurnInLimit}");
     }
 
@@ -304,5 +353,6 @@ public sealed class NpcManagementTweaksPlugin : TerrariaPlugin
     {
         TShock.Log.ConsoleInfo($"[NpcManagementTweaks] {message}");
     }
-}
 
+    private readonly record struct TownNpcTeleportState(int DaySequence, int HomeTileX, int HomeTileY);
+}
